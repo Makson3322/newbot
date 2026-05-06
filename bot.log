@@ -380,3 +380,7 @@ sqlite3.OperationalError: database is locked
 2026-05-06 21:09:29,806 - services.username_checker - INFO - CHECK @ahsqla → Свободен
 2026-05-06 21:09:30,093 - aiogram.event - INFO - Update id=267965766 is handled. Duration 1469 ms by bot id=8648148862
 2026-05-06 21:09:35,535 - aiogram.event - INFO - Update id=267965767 is not handled. Duration 0 ms by bot id=8648148862
+2026-05-06 21:14:09,469 - aiogram.dispatcher - INFO - Polling stopped for bot @codedev_username_bot id=8648148862 - 'codedev | UserName'
+2026-05-06 21:14:09,470 - aiogram.dispatcher - INFO - Polling stopped
+2026-05-06 21:14:09,725 - __main__ - INFO - Остановка бота...
+2026-05-06 21:14:09,729 - __main__ - INFO - ⏹ Бот остановлен пользователем

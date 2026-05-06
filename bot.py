@@ -17,7 +17,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 
 # Импорт обработчиков
-from handlers import start, search, filter, profile, support
+from handlers import start, search, filter, profile, support, admin
 from database.db import db
 
 # Загрузка переменных окружения
@@ -63,6 +63,7 @@ async def main():
     dp.include_router(filter.router)
     dp.include_router(profile.router)
     dp.include_router(support.router)
+    dp.include_router(admin.router)
     
     # Инициализация базы данных
     logger.info("Инициализация базы данных...")

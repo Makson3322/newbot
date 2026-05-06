@@ -5,7 +5,7 @@
 
 import aiosqlite
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
@@ -32,16 +32,21 @@ class Database:
                     total_searches INTEGER DEFAULT 0,
                     found_usernames INTEGER DEFAULT 0,
                     last_search_date TEXT,
-                    is_premium INTEGER DEFAULT 0
+                    is_premium INTEGER DEFAULT 0,
+                    premium_until TEXT DEFAULT NULL
                 )
             """)
             
-            # Добавляем колонку is_premium если её нет (для существующих БД)
-            try:
-                await db.execute("ALTER TABLE users ADD COLUMN is_premium INTEGER DEFAULT 0")
-                await db.commit()
-            except Exception:
-                pass  # Колонка уже существует
+            # Миграции для существующих БД
+            for col, definition in [
+                ("is_premium", "INTEGER DEFAULT 0"),
+                ("premium_until", "TEXT DEFAULT NULL"),
+            ]:
+                try:
+                    await db.execute(f"ALTER TABLE users ADD COLUMN {col} {definition}")
+                    await db.commit()
+                except Exception:
+                    pass
             
             # Таблица статистики по дням
             await db.execute("""
@@ -171,21 +176,89 @@ class Database:
 
 
     async def check_premium(self, user_id: int) -> bool:
-        """Проверка премиум статуса пользователя"""
+        """
+        Проверка премиум статуса.
+        Учитывает срок действия premium_until.
+        Если срок истёк — автоматически снимает флаг.
+        """
         async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute("""
-                SELECT is_premium FROM users WHERE user_id = ?
-            """, (user_id,)) as cursor:
+            async with db.execute(
+                "SELECT is_premium, premium_until FROM users WHERE user_id = ?",
+                (user_id,)
+            ) as cursor:
                 row = await cursor.fetchone()
-                return bool(row[0]) if row else False
+                if not row:
+                    return False
+                is_premium, premium_until = row
 
-    async def set_premium(self, user_id: int, status: bool = True):
-        """Установка премиум статуса пользователю"""
+                if not is_premium:
+                    return False
+
+                # Бессрочный премиум (premium_until = NULL)
+                if premium_until is None:
+                    return True
+
+                # Проверяем срок
+                try:
+                    until_dt = datetime.strptime(premium_until, "%Y-%m-%d %H:%M:%S")
+                    if datetime.now() < until_dt:
+                        return True
+                    # Срок истёк — снимаем
+                    await db.execute(
+                        "UPDATE users SET is_premium = 0, premium_until = NULL WHERE user_id = ?",
+                        (user_id,)
+                    )
+                    await db.commit()
+                    return False
+                except Exception:
+                    return bool(is_premium)
+
+    async def set_premium(self, user_id: int, days: Optional[int] = None, status: bool = True):
+        """
+        Выдача / снятие премиума.
+        days=None → бессрочный
+        days=N    → на N дней от текущего момента
+        status=False → снять премиум
+        """
         async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("""
-                UPDATE users SET is_premium = ? WHERE user_id = ?
-            """, (int(status), user_id))
+            if not status:
+                await db.execute(
+                    "UPDATE users SET is_premium = 0, premium_until = NULL WHERE user_id = ?",
+                    (user_id,)
+                )
+            elif days is None:
+                await db.execute(
+                    "UPDATE users SET is_premium = 1, premium_until = NULL WHERE user_id = ?",
+                    (user_id,)
+                )
+            else:
+                until = datetime.now() + timedelta(days=days)
+                until_str = until.strftime("%Y-%m-%d %H:%M:%S")
+                await db.execute(
+                    "UPDATE users SET is_premium = 1, premium_until = ? WHERE user_id = ?",
+                    (until_str, user_id)
+                )
             await db.commit()
+
+    async def get_premium_until(self, user_id: int) -> Optional[str]:
+        """Возвращает дату окончания премиума или None"""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT premium_until FROM users WHERE user_id = ?",
+                (user_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else None
+
+    async def get_all_users(self) -> list:
+        """Список всех пользователей для админки"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT user_id, username, first_name, is_premium, premium_until FROM users ORDER BY user_id"
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
 
 
 # Глобальный экземпляр базы данных

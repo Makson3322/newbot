@@ -132,21 +132,16 @@ def get_premium_plans_keyboard() -> InlineKeyboardMarkup:
     return keyboard
 
 
-def get_payment_keyboard(amount: int) -> InlineKeyboardMarkup:
+def get_payment_keyboard(amount: int, days: int = 30) -> InlineKeyboardMarkup:
     """
-    Inline клавиатура для оплаты
-    
-    Args:
-        amount: Сумма платежа
-    
-    Returns:
-        InlineKeyboardMarkup с кнопками оплаты
+    Inline клавиатура для оплаты.
+    days передаётся в check_payment чтобы знать на сколько выдавать премиум.
     """
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=f"💳 Оплатить СБП", callback_data=f"pay_sbp_{amount}")],
-            [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_payment_{amount}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_payment")]
+            [InlineKeyboardButton(text="💳 Оплатить СБП", callback_data=f"pay_sbp_{amount}_{days}")],
+            [InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_payment_{amount}_{days}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_payment")],
         ]
     )
     return keyboard
