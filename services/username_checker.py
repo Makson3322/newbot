@@ -1,14 +1,11 @@
 """
-Модуль для проверки доступности юзернеймов в Telegram.
-Проверяет через:
-  1. Telegram Bot API  — каналы / группы / боты
-  2. t.me/<username>   — личные аккаунты (парсинг HTML)
-  3. fragment.com      — не продаётся ли ник на аукционе
+Проверка юзернеймов:
+  1. Telegram Bot API (bot.get_chat) — каналы, группы, боты
+  2. t.me/<username>                 — личные аккаунты (парсинг HTML)
+  3. Fragment HTTP                   — не продаётся ли ник
 
-Ключевые правила надёжности:
-  - Fragment: при любой ошибке/таймауте считаем ник ЗАНЯТЫМ (не выдаём мусор)
-  - Семафор на Fragment: не более 3 одновременных запросов (иначе Fragment банит)
-  - BATCH_SIZE уменьшен до 5 чтобы не перегружать Fragment
+Правило надёжности: при любой ошибке/таймауте → считаем ЗАНЯТЫМ.
+Лучше пропустить свободный, чем выдать занятый.
 """
 
 import asyncio
@@ -21,7 +18,6 @@ from time import time
 
 logger = logging.getLogger(__name__)
 
-# Пачка: 5 ников одновременно — баланс скорости и надёжности Fragment
 BATCH_SIZE = 5
 
 # Семафор: не более 3 запросов к Fragment одновременно
@@ -34,23 +30,24 @@ HEADERS = {
         "Chrome/124.0.0.0 Safari/537.36"
     ),
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
-# Маркеры занятости на t.me (только у занятых, проверено)
+# Маркеры ЗАНЯТОГО ника на t.me (только у существующих аккаунтов)
 TME_OCCUPIED = [
-    "tgme_page_title",
-    "tgme_page_photo",
-    "view in telegram",
+    "tgme_page_title",   # имя профиля — есть только у существующих
+    "tgme_page_photo",   # фото профиля
+    "tgme_page_extra",   # доп. блок профиля
+    "view in telegram",  # кнопка открыть
     "join channel",
     "join group",
 ]
 
-# Маркеры того что ник ЗАНЯТ на Fragment (проверено на реальных страницах)
+# Маркеры занятости на Fragment
 FRAGMENT_SELLING = [
-    "tm-status-unavail",   # статус Sold/Unavailable — есть у ВСЕХ занятых ников
-    'content="buy @',      # og:title = "Buy @username"
-    "place a bid",         # кнопка ставки
+    "tm-status-unavail",       # Sold/Unavailable
+    'content="buy @',          # "Buy @username"
+    'content="make an offer',  # "Make an offer for @username"
+    "place a bid",             # кнопка ставки
 ]
 
 
@@ -68,7 +65,6 @@ class UsernameChecker:
                 limit=50,
                 limit_per_host=10,
                 ttl_dns_cache=300,
-                force_close=False,
             )
             self._session = aiohttp.ClientSession(
                 headers=HEADERS,
@@ -91,71 +87,87 @@ class UsernameChecker:
         self._cache[username] = (available, time())
 
     # ------------------------------------------------------------------ #
-    #  Bot API                                                             #
+    #  1. Telegram Bot API                                                 #
     # ------------------------------------------------------------------ #
 
     async def _check_bot_api(self, username: str) -> Optional[bool]:
         """
-        None  → неопределённо (личный аккаунт)
+        True  → явно свободен (TG: "chat not found")
         False → занят (чат найден)
-        True  → явно свободен ("chat not found")
+        None  → личный аккаунт или ошибка (нужна проверка t.me)
         """
         try:
             await self.bot.get_chat(f"@{username}")
-            return False
+            return False  # нашли — занят
         except TelegramBadRequest as e:
             err = str(e).lower()
             if any(x in err for x in (
                 "chat not found", "not found",
                 "username is not occupied", "peer_id_invalid",
+                "username invalid",
             )):
-                return True
+                # TG не знает этот ник как публичный чат —
+                # может быть личный аккаунт, нужна проверка t.me
+                return None
             logger.debug(f"Bot API unknown error @{username}: {e}")
-            return None
+            return False
         except Exception as e:
             logger.debug(f"Bot API exception @{username}: {type(e).__name__}")
             return None
 
     # ------------------------------------------------------------------ #
-    #  t.me                                                                #
+    #  2. t.me — единственный способ проверить личные аккаунты            #
     # ------------------------------------------------------------------ #
 
     async def _check_tme(self, username: str) -> bool:
-        """True → свободен, False → занят. При ошибке → True (не блокируем)."""
+        """
+        True  → ника нет на t.me (свободен)
+        False → ник существует (занят) ИЛИ ошибка/таймаут
+
+        При ошибке → False (занят). Консервативно.
+        """
         try:
             session = await self._get_session()
             async with session.get(
                 f"https://t.me/{username.lower()}",
-                timeout=aiohttp.ClientTimeout(total=8),
+                timeout=aiohttp.ClientTimeout(total=10),
                 allow_redirects=True,
             ) as resp:
                 if resp.status != 200:
-                    return True
-                chunk = await resp.content.read(16384)
+                    # Нестандартный статус — считаем занятым
+                    return False
+
+                chunk = await resp.content.read(32768)
                 html = chunk.decode("utf-8", errors="ignore").lower()
+
                 for marker in TME_OCCUPIED:
                     if marker in html:
+                        logger.debug(f"t.me @{username}: занят ({marker})")
                         return False
+
                 if "sorry, this username is not available" in html:
                     return False
+
+                logger.debug(f"t.me @{username}: свободен")
                 return True
+
+        except asyncio.TimeoutError:
+            logger.debug(f"t.me @{username}: таймаут → занят")
+            return False
         except Exception as e:
-            logger.debug(f"t.me error @{username}: {e}")
-            return True
+            logger.debug(f"t.me @{username}: ошибка {e} → занят")
+            return False
 
     # ------------------------------------------------------------------ #
-    #  Fragment                                                            #
+    #  3. Fragment HTTP                                                    #
     # ------------------------------------------------------------------ #
 
     async def _check_fragment(self, username: str) -> bool:
         """
-        True  → не на Fragment (свободен со стороны Fragment)
-        False → продаётся / продан
-
-        ВАЖНО: при любой ошибке или таймауте возвращаем FALSE (занят).
-        Лучше пропустить свободный ник, чем выдать занятый.
+        True  → не на Fragment
+        False → продаётся/продан ИЛИ ошибка/таймаут (консервативно)
         """
-        async with _fragment_sem:  # не более 3 одновременных запросов
+        async with _fragment_sem:
             try:
                 session = await self._get_session()
                 async with session.get(
@@ -164,8 +176,6 @@ class UsernameChecker:
                     allow_redirects=True,
                 ) as resp:
                     if resp.status != 200:
-                        # Нестандартный статус — не знаем, считаем занятым
-                        logger.debug(f"Fragment @{username}: status {resp.status} → занят")
                         return False
 
                     chunk = await resp.content.read(16384)
@@ -180,7 +190,6 @@ class UsernameChecker:
                     return True
 
             except asyncio.TimeoutError:
-                # Таймаут = Fragment не ответил = не знаем = считаем занятым
                 logger.debug(f"Fragment @{username}: таймаут → занят")
                 return False
             except Exception as e:
@@ -192,46 +201,31 @@ class UsernameChecker:
     # ------------------------------------------------------------------ #
 
     async def check_username(self, username: str) -> Tuple[bool, str]:
+        """
+        Алгоритм:
+        1. Bot API → если нашёл чат: занят
+        2. t.me   → всегда проверяем (ловит личные аккаунты)
+        3. Fragment → проверяем если прошли 1 и 2
+        """
         cached = self._from_cache(username)
         if cached is not None:
             return cached, ("Свободен" if cached else "Занят (кэш)")
 
-        # Шаг 1: Bot API
+        # Шаг 1: Bot API (быстро ловит каналы/группы/ботов)
         api_result = await self._check_bot_api(username)
-
         if api_result is False:
             self._to_cache(username, False)
             return False, "Занят в Telegram"
 
-        if api_result is True:
-            # TG явно свободен — проверяем Fragment
-            fr_free = await self._check_fragment(username)
-            if not fr_free:
-                self._to_cache(username, False)
-                return False, "Продаётся на Fragment"
-            self._to_cache(username, True)
-            return True, "Свободен"
-
-        # Шаг 2: api=None (личный аккаунт) — t.me + Fragment параллельно
-        tme_result, fr_result = await asyncio.gather(
-            self._check_tme(username),
-            self._check_fragment(username),
-            return_exceptions=True,
-        )
-
-        # t.me: ошибка = не блокируем (True)
-        if isinstance(tme_result, BaseException):
-            tme_result = True
-        # Fragment: ошибка = блокируем (False) — уже обработано внутри метода,
-        # но на случай если gather поймал BaseException
-        if isinstance(fr_result, BaseException):
-            fr_result = False
-
-        if not tme_result:
+        # Шаг 2: t.me (ловит личные аккаунты — Bot API их не видит)
+        tme_free = await self._check_tme(username)
+        if not tme_free:
             self._to_cache(username, False)
             return False, "Занят в Telegram"
 
-        if not fr_result:
+        # Шаг 3: Fragment
+        fr_free = await self._check_fragment(username)
+        if not fr_free:
             self._to_cache(username, False)
             return False, "Продаётся на Fragment"
 

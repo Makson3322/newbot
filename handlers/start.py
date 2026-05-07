@@ -15,7 +15,6 @@ from database.db import db
 
 router = Router()
 
-# Тарифы: callback_data → (название, дней, сумма)
 PLANS = {
     "plan_2_100":  ("2 дня",    2,  100),
     "plan_4_175":  ("4 дня",    4,  175),
@@ -23,10 +22,20 @@ PLANS = {
     "plan_30_650": ("30 дней", 30,  650),
 }
 
+E = {
+    "search":  '<tg-emoji emoji-id="5870676941614354370">🔍</tg-emoji>',
+    "diamond": '<tg-emoji emoji-id="6032644646587338669">🎁</tg-emoji>',
+    "ok":      '<tg-emoji emoji-id="5870633910337015697">✅</tg-emoji>',
+    "no":      '<tg-emoji emoji-id="5870657884844462243">✖️</tg-emoji>',
+    "clock":   '<tg-emoji emoji-id="5983150113483134607">⏰</tg-emoji>',
+    "money":   '<tg-emoji emoji-id="5904462880941545555">🪙</tg-emoji>',
+    "person":  '<tg-emoji emoji-id="5870994129244131212">👤</tg-emoji>',
+    "gift":    '<tg-emoji emoji-id="6032644646587338669">🎁</tg-emoji>',
+    "star":    '<tg-emoji emoji-id="6041731551845159060">🎉</tg-emoji>',
+    "info":    '<tg-emoji emoji-id="6028435952299413210">ℹ</tg-emoji>',
+    "wallet":  '<tg-emoji emoji-id="5769126056262898415">👛</tg-emoji>',
+}
 
-# ------------------------------------------------------------------ #
-#  /start                                                              #
-# ------------------------------------------------------------------ #
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
@@ -40,28 +49,28 @@ async def cmd_start(message: Message, state: FSMContext):
 
     stats = await db.get_user_stats(message.from_user.id)
     has_premium = await db.check_premium(message.from_user.id)
-
     attempts_left = max(0, 3 - stats.get("today_searches", 0))
     username = message.from_user.username or "username"
 
     welcome_text = (
-        f"⚡️codedev || {username} — поиск свободных ников\n"
-        "━━━━━━━━━━━━━━━━━\n"
-        f"🎯 Попытки: {'∞' if has_premium else attempts_left}/{'∞' if has_premium else '3'}\n"
-        "💎 Premium открывает:\n"
-        "• Поиск редких 5-буквенных ников\n"
-        "• Фильтр по маске (a?b?c → любые буквы)\n"
-        "• Безлимитный поиск без ограничений\n\n"
+        f"<b>⚡️ codedev || {username}</b>\n"
+        f"<i>поиск свободных ников в Telegram</i>\n"
+        "━━━━━━━━━━━━━━━━━\n\n"
+        f"{E['search']} Попытки: <b>{'∞' if has_premium else attempts_left}/{'∞' if has_premium else '3'}</b>\n"
+        f"{E['diamond']} Premium открывает:\n"
+        f"  • {E['search']} Поиск редких 5-буквенных ников\n"
+        f"  • {E['ok']} Фильтр по маске (a?b?c)\n"
+        f"  • {E['ok']} Безлимитный поиск\n\n"
         "Выберите действие ниже 👇"
     )
 
     await message.answer(welcome_text, reply_markup=get_main_keyboard(), parse_mode="HTML")
-    await message.answer("📋 Документы бота:", reply_markup=get_documents_keyboard(), parse_mode="HTML")
+    await message.answer(
+        f"{E['info']} <b>Документы бота:</b>",
+        reply_markup=get_documents_keyboard(),
+        parse_mode="HTML",
+    )
 
-
-# ------------------------------------------------------------------ #
-#  Премиум                                                             #
-# ------------------------------------------------------------------ #
 
 @router.message(F.text == "💎 Премиум")
 async def show_premium(message: Message):
@@ -77,27 +86,27 @@ async def show_premium(message: Message):
                 until_str = dt.strftime("%d.%m.%Y %H:%M")
             except Exception:
                 until_str = until
-            expire_line = f"\n⏳ Действует до: <b>{until_str}</b>"
+            expire_line = f"\n{E['clock']} Действует до: <b>{until_str}</b>"
         else:
-            expire_line = "\n⏳ Срок: <b>бессрочно</b>"
+            expire_line = f"\n{E['clock']} Срок: <b>бессрочно</b>"
 
         await message.answer(
-            f"💎 <b>У вас уже есть Premium!</b>{expire_line}\n\n"
-            "• Безлимитный поиск ✅\n"
-            "• Поиск 5-буквенных ников ✅\n"
-            "• Фильтр по маске ✅",
+            f"{E['diamond']} <b>У вас уже есть Premium!</b>{expire_line}\n\n"
+            f"{E['ok']} Безлимитный поиск\n"
+            f"{E['ok']} Поиск 5-буквенных ников\n"
+            f"{E['ok']} Фильтр по маске",
             parse_mode="HTML",
             reply_markup=get_main_keyboard(),
         )
         return
 
     await message.answer(
-        "💎 <b>Premium подписка</b>\n"
+        f"{E['diamond']} <b>Premium подписка</b>\n"
         "━━━━━━━━━━━━━━━━━\n\n"
-        "Что открывает Premium:\n"
-        "• 🔍 Поиск редких 5-буквенных ников\n"
-        "• 🎭 Фильтр по маске (a?b?c → любые буквы)\n"
-        "• ♾️ Безлимитный поиск без ограничений\n\n"
+        "<b>Что открывает Premium:</b>\n"
+        f"  {E['search']} Поиск редких 5-буквенных ников\n"
+        f"  {E['ok']} Фильтр по маске (a?b?c → любые буквы)\n"
+        f"  {E['ok']} Безлимитный поиск без ограничений\n\n"
         "Выберите тариф:",
         parse_mode="HTML",
         reply_markup=get_premium_plans_keyboard(),
@@ -113,8 +122,8 @@ async def handle_premium_plan(callback: CallbackQuery):
 
     name, days, amount = plan
     await callback.message.edit_text(
-        f"💳 <b>Оплата Premium — {name}</b>\n\n"
-        f"Сумма: <b>{amount}₽</b>\n\n"
+        f"{E['wallet']} <b>Оплата Premium — {name}</b>\n\n"
+        f"{E['money']} Сумма: <b>{amount}₽</b>\n\n"
         f"Нажмите кнопку ниже для оплаты через СБП:",
         parse_mode="HTML",
         reply_markup=get_payment_keyboard(amount, days),
@@ -124,29 +133,21 @@ async def handle_premium_plan(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("pay_sbp_"))
 async def pay_sbp(callback: CallbackQuery):
-    """Кнопка 'Оплатить СБП' — временно недоступно"""
     await callback.answer(
-        "⚠️ Оплата временно недоступна.\n"
-        "Нажмите «✅ Проверить оплату» для получения Premium.",
+        "Оплата временно недоступна.\n"
+        "Нажмите «Проверить оплату» для получения Premium.",
         show_alert=True,
     )
 
 
 @router.callback_query(F.data.startswith("check_payment_"))
 async def check_payment(callback: CallbackQuery):
-    """
-    Временная логика: при нажатии 'Проверить оплату' сразу выдаём премиум.
-    Формат callback: check_payment_{amount}_{days}
-    """
     user_id = callback.from_user.id
-
-    # Парсим days из callback_data
     parts = callback.data.split("_")
-    # check_payment_{amount}_{days}
     try:
         days = int(parts[-1])
     except (ValueError, IndexError):
-        days = 30  # fallback
+        days = 30
 
     await db.set_premium(user_id, days=days)
 
@@ -155,19 +156,22 @@ async def check_payment(callback: CallbackQuery):
     until_str = until.strftime("%d.%m.%Y %H:%M")
 
     await callback.message.edit_text(
-        f"✅ <b>Premium активирован!</b>\n\n"
-        f"⏳ Действует до: <b>{until_str}</b>\n\n"
-        f"Теперь вам доступны:\n"
-        f"• ♾️ Безлимитный поиск\n"
-        f"• 🔍 Поиск 5-буквенных ников\n"
-        f"• 🎭 Фильтр по маске",
+        f"{E['star']} <b>Premium активирован!</b>\n\n"
+        f"{E['clock']} Действует до: <b>{until_str}</b>\n\n"
+        "<b>Теперь вам доступны:</b>\n"
+        f"  {E['ok']} Безлимитный поиск\n"
+        f"  {E['search']} Поиск 5-буквенных ников\n"
+        f"  {E['ok']} Фильтр по маске",
         parse_mode="HTML",
         reply_markup=get_main_keyboard(),
     )
-    await callback.answer("💎 Premium активирован!", show_alert=False)
+    await callback.answer("Premium активирован!", show_alert=False)
 
 
 @router.callback_query(F.data == "cancel_payment")
 async def cancel_payment(callback: CallbackQuery):
-    await callback.message.edit_text("❌ Оплата отменена.")
+    await callback.message.edit_text(
+        f"{E['no']} Оплата отменена.",
+        parse_mode="HTML",
+    )
     await callback.answer()

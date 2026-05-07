@@ -1,147 +1,124 @@
 """
-Модуль с клавиатурами для бота
+Клавиатуры бота с премиум эмодзи
 """
 
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    ReplyKeyboardMarkup, KeyboardButton,
+    InlineKeyboardMarkup, InlineKeyboardButton
+)
 
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
-    """
-    Главная клавиатура бота
-    
-    Returns:
-        ReplyKeyboardMarkup с основными кнопками
-    """
-    keyboard = ReplyKeyboardMarkup(
+    return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="🔍 ПОИСК"),
-                KeyboardButton(text="💎 Премиум")
+                KeyboardButton(text="🔍 ПОИСК", icon_custom_emoji_id="5870676941614354370"),
+                KeyboardButton(text="💎 Премиум", icon_custom_emoji_id="6032644646587338669"),
             ],
             [
-                KeyboardButton(text="👤 Профиль"),
-                KeyboardButton(text="🆘 Поддержка")
-            ]
+                KeyboardButton(text="👤 Профиль", icon_custom_emoji_id="5870994129244131212"),
+                KeyboardButton(text="🆘 Поддержка", icon_custom_emoji_id="6039422865189638057"),
+            ],
         ],
         resize_keyboard=True,
-        input_field_placeholder="Выберите действие..."
+        input_field_placeholder="Выберите действие...",
     )
-    return keyboard
 
 
 def get_cancel_keyboard() -> ReplyKeyboardMarkup:
-    """
-    Клавиатура с кнопкой отмены
-    
-    Returns:
-        ReplyKeyboardMarkup с кнопкой отмены
-    """
-    keyboard = ReplyKeyboardMarkup(
+    return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Отмена")]
+            [KeyboardButton(text="Отмена", icon_custom_emoji_id="5870657884844462243")],
         ],
-        resize_keyboard=True
+        resize_keyboard=True,
     )
-    return keyboard
 
 
 def get_search_control_keyboard() -> InlineKeyboardMarkup:
-    """
-    Inline клавиатура для управления поиском
-    
-    Returns:
-        InlineKeyboardMarkup с кнопкой остановки поиска
-    """
-    keyboard = InlineKeyboardMarkup(
+    return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⏹ Остановить поиск", callback_data="stop_search")]
+            [InlineKeyboardButton(
+                text="Остановить поиск",
+                callback_data="stop_search",
+                icon_custom_emoji_id="5870657884844462243",
+            )],
         ]
     )
-    return keyboard
 
 
 def get_documents_keyboard() -> InlineKeyboardMarkup:
-    """
-    Inline клавиатура с документами бота
-    
-    Returns:
-        InlineKeyboardMarkup с кнопками документов
-    """
-    keyboard = InlineKeyboardMarkup(
+    return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="📜 Польз. соглашение", url="https://telegra.ph/Polzovatelskoe-soglashenie-04-01-19"),
-                InlineKeyboardButton(text="🔒 Конфиденциальность", url="https://telegra.ph/Politika-konfidencialnosti-04-01-26")
+                InlineKeyboardButton(
+                    text="Польз. соглашение",
+                    url="https://telegra.ph/Polzovatelskoe-soglashenie-04-01-19",
+                    icon_custom_emoji_id="5769289093221454192",
+                ),
+                InlineKeyboardButton(
+                    text="Конфиденциальность",
+                    url="https://telegra.ph/Politika-konfidencialnosti-04-01-26",
+                    icon_custom_emoji_id="6037249452824072506",
+                ),
             ]
         ]
     )
-    return keyboard
 
 
 def get_search_type_keyboard() -> InlineKeyboardMarkup:
-    """
-    Inline клавиатура для выбора типа поиска
-    
-    Returns:
-        InlineKeyboardMarkup с кнопками типов поиска
-    """
-    keyboard = InlineKeyboardMarkup(
+    return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="5 букв", callback_data="search_5"),
-                InlineKeyboardButton(text="6 букв", callback_data="search_6")
+                InlineKeyboardButton(text="5 букв", callback_data="search_5", icon_custom_emoji_id="5870676941614354370"),
+                InlineKeyboardButton(text="6 букв", callback_data="search_6", icon_custom_emoji_id="5870676941614354370"),
             ],
             [
-                InlineKeyboardButton(text="Фильтр", callback_data="search_filter")
-            ]
+                InlineKeyboardButton(text="Фильтр", callback_data="search_filter", icon_custom_emoji_id="5870982283724328568"),
+            ],
         ]
     )
-    return keyboard
 
 
 def get_premium_keyboard() -> InlineKeyboardMarkup:
-    """
-    Inline клавиатура для покупки премиума
-    
-    Returns:
-        InlineKeyboardMarkup с кнопкой покупки
-    """
-    keyboard = InlineKeyboardMarkup(
+    return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💎 Купить Premium", callback_data="buy_premium")]
+            [InlineKeyboardButton(
+                text="Купить Premium",
+                callback_data="buy_premium",
+                icon_custom_emoji_id="6032644646587338669",
+            )],
         ]
     )
-    return keyboard
 
 
 def get_premium_plans_keyboard() -> InlineKeyboardMarkup:
-    """
-    Inline клавиатура с тарифами премиума
-    
-    Returns:
-        InlineKeyboardMarkup с тарифными планами
-    """
-    keyboard = InlineKeyboardMarkup(
+    return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="2 дня — 100₽", callback_data="plan_2_100")],
-            [InlineKeyboardButton(text="4 дня — 175₽", callback_data="plan_4_175")],
-            [InlineKeyboardButton(text="10 дней — 300₽", callback_data="plan_10_300")],
-            [InlineKeyboardButton(text="30 дней — 650₽", callback_data="plan_30_650")]
+            [InlineKeyboardButton(text="2 дня — 100₽",   callback_data="plan_2_100",  icon_custom_emoji_id="5904462880941545555")],
+            [InlineKeyboardButton(text="4 дня — 175₽",   callback_data="plan_4_175",  icon_custom_emoji_id="5904462880941545555")],
+            [InlineKeyboardButton(text="10 дней — 300₽", callback_data="plan_10_300", icon_custom_emoji_id="5904462880941545555")],
+            [InlineKeyboardButton(text="30 дней — 650₽", callback_data="plan_30_650", icon_custom_emoji_id="5904462880941545555")],
         ]
     )
-    return keyboard
 
 
 def get_payment_keyboard(amount: int, days: int = 30) -> InlineKeyboardMarkup:
-    """
-    Inline клавиатура для оплаты.
-    days передаётся в check_payment чтобы знать на сколько выдавать премиум.
-    """
-    keyboard = InlineKeyboardMarkup(
+    return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить СБП", callback_data=f"pay_sbp_{amount}_{days}")],
-            [InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_payment_{amount}_{days}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_payment")],
+            [InlineKeyboardButton(
+                text="Оплатить СБП",
+                callback_data=f"pay_sbp_{amount}_{days}",
+                icon_custom_emoji_id="5879814368572478751",
+            )],
+            [InlineKeyboardButton(
+                text="Проверить оплату",
+                callback_data=f"check_payment_{amount}_{days}",
+                icon_custom_emoji_id="5870633910337015697",
+            )],
+            [InlineKeyboardButton(
+                text="Отмена",
+                callback_data="cancel_payment",
+                icon_custom_emoji_id="5870657884844462243",
+            )],
         ]
     )
-    return keyboard
