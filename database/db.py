@@ -72,7 +72,21 @@ class Database:
                     FOREIGN KEY (user_id) REFERENCES users (user_id)
                 )
             """)
-            
+
+            # Таблица платежей Platega
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS payments (
+                    transaction_id TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    amount INTEGER NOT NULL,
+                    days INTEGER NOT NULL,
+                    status TEXT DEFAULT 'PENDING',
+                    created_at TEXT,
+                    updated_at TEXT,
+                    FOREIGN KEY (user_id) REFERENCES users (user_id)
+                )
+            """)
+
             await db.commit()
             logger.info("База данных инициализирована")
     
@@ -259,6 +273,67 @@ class Database:
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------ #
+    #  Платежи                                                             #
+    # ------------------------------------------------------------------ #
+
+    async def create_payment(self, transaction_id: str, user_id: int,
+                              amount: int, days: int):
+        """Сохранить новый платёж со статусом PENDING."""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """INSERT OR IGNORE INTO payments
+                   (transaction_id, user_id, amount, days, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, 'PENDING', ?, ?)""",
+                (transaction_id, user_id, amount, days, now, now),
+            )
+            await db.commit()
+
+    async def get_payment(self, transaction_id: str) -> Optional[Dict]:
+        """Получить платёж по transaction_id."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM payments WHERE transaction_id = ?",
+                (transaction_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def get_pending_payment_by_user(self, user_id: int) -> Optional[Dict]:
+        """Последний PENDING платёж пользователя."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """SELECT * FROM payments
+                   WHERE user_id = ? AND status = 'PENDING'
+                   ORDER BY created_at DESC LIMIT 1""",
+                (user_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def confirm_payment(self, transaction_id: str):
+        """Пометить платёж как CONFIRMED."""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE payments SET status = 'CONFIRMED', updated_at = ? WHERE transaction_id = ?",
+                (now, transaction_id),
+            )
+            await db.commit()
+
+    async def cancel_payment(self, transaction_id: str):
+        """Пометить платёж как CANCELED."""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE payments SET status = 'CANCELED', updated_at = ? WHERE transaction_id = ?",
+                (now, transaction_id),
+            )
+            await db.commit()
 
 
 # Глобальный экземпляр базы данных

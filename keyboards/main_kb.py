@@ -12,12 +12,12 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="🔍 ПОИСК", icon_custom_emoji_id="5870676941614354370"),
-                KeyboardButton(text="💎 Премиум", icon_custom_emoji_id="6032644646587338669"),
+                KeyboardButton(text="🔍 ПОИСК"),
+                KeyboardButton(text="💎 Премиум"),
             ],
             [
-                KeyboardButton(text="👤 Профиль", icon_custom_emoji_id="5870994129244131212"),
-                KeyboardButton(text="🆘 Поддержка", icon_custom_emoji_id="6039422865189638057"),
+                KeyboardButton(text="👤 Профиль"),
+                KeyboardButton(text="🆘 Поддержка"),
             ],
         ],
         resize_keyboard=True,

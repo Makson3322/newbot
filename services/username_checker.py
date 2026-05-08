@@ -1,11 +1,7 @@
 """
 Проверка юзернеймов:
-  1. Telegram Bot API (bot.get_chat) — каналы, группы, боты
-  2. t.me/<username>                 — личные аккаунты (парсинг HTML)
-  3. Fragment HTTP                   — не продаётся ли ник
-
-Правило надёжности: при любой ошибке/таймауте → считаем ЗАНЯТЫМ.
-Лучше пропустить свободный, чем выдать занятый.
+  1. Telegram — bot.get_chat(@username): если "chat not found" → свободен в TG
+  2. Fragment  — GET https://fragment.com/username/<nick>: ищем маркеры продажи в HTML
 """
 
 import asyncio
@@ -18,10 +14,10 @@ from time import time
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 5
+BATCH_SIZE = 8
 
-# Семафор: не более 3 запросов к Fragment одновременно
-_fragment_sem = asyncio.Semaphore(3)
+# Семафор: не более 4 запросов к Fragment одновременно
+_fragment_sem = asyncio.Semaphore(4)
 
 HEADERS = {
     "User-Agent": (
@@ -32,22 +28,12 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-# Маркеры ЗАНЯТОГО ника на t.me (только у существующих аккаунтов)
-TME_OCCUPIED = [
-    "tgme_page_title",   # имя профиля — есть только у существующих
-    "tgme_page_photo",   # фото профиля
-    "tgme_page_extra",   # доп. блок профиля
-    "view in telegram",  # кнопка открыть
-    "join channel",
-    "join group",
-]
-
-# Маркеры занятости на Fragment
+# Маркеры занятости на Fragment (проверено на реальных страницах)
 FRAGMENT_SELLING = [
-    "tm-status-unavail",       # Sold/Unavailable
-    'content="buy @',          # "Buy @username"
-    'content="make an offer',  # "Make an offer for @username"
-    "place a bid",             # кнопка ставки
+    "tm-status-unavail",        # статус Sold/Unavailable
+    'content="buy @',           # og:title = "Buy @username"
+    'content="make an offer',   # og:title = "Make an offer for @username" — выставлен на продажу
+    "place a bid",              # кнопка ставки
 ]
 
 
@@ -68,7 +54,7 @@ class UsernameChecker:
             )
             self._session = aiohttp.ClientSession(
                 headers=HEADERS,
-                timeout=aiohttp.ClientTimeout(total=12, connect=5),
+                timeout=aiohttp.ClientTimeout(total=8, connect=3),
                 connector=connector,
             )
         return self._session
@@ -87,95 +73,61 @@ class UsernameChecker:
         self._cache[username] = (available, time())
 
     # ------------------------------------------------------------------ #
-    #  1. Telegram Bot API                                                 #
+    #  Telegram: bot.get_chat                                              #
     # ------------------------------------------------------------------ #
 
-    async def _check_bot_api(self, username: str) -> Optional[bool]:
+    async def _check_telegram(self, username: str) -> bool:
         """
-        True  → явно свободен (TG: "chat not found")
-        False → занят (чат найден)
-        None  → личный аккаунт или ошибка (нужна проверка t.me)
+        Пытается открыть чат через Bot API.
+        True  → ник свободен ("chat not found")
+        False → ник занят (чат найден или неизвестная ошибка)
         """
         try:
             await self.bot.get_chat(f"@{username}")
-            return False  # нашли — занят
+            # Чат открылся — ник занят
+            return False
         except TelegramBadRequest as e:
             err = str(e).lower()
             if any(x in err for x in (
-                "chat not found", "not found",
-                "username is not occupied", "peer_id_invalid",
+                "chat not found",
+                "not found",
+                "username is not occupied",
+                "peer_id_invalid",
                 "username invalid",
             )):
-                # TG не знает этот ник как публичный чат —
-                # может быть личный аккаунт, нужна проверка t.me
-                return None
-            logger.debug(f"Bot API unknown error @{username}: {e}")
-            return False
-        except Exception as e:
-            logger.debug(f"Bot API exception @{username}: {type(e).__name__}")
-            return None
-
-    # ------------------------------------------------------------------ #
-    #  2. t.me — единственный способ проверить личные аккаунты            #
-    # ------------------------------------------------------------------ #
-
-    async def _check_tme(self, username: str) -> bool:
-        """
-        True  → ника нет на t.me (свободен)
-        False → ник существует (занят) ИЛИ ошибка/таймаут
-
-        При ошибке → False (занят). Консервативно.
-        """
-        try:
-            session = await self._get_session()
-            async with session.get(
-                f"https://t.me/{username.lower()}",
-                timeout=aiohttp.ClientTimeout(total=10),
-                allow_redirects=True,
-            ) as resp:
-                if resp.status != 200:
-                    # Нестандартный статус — считаем занятым
-                    return False
-
-                chunk = await resp.content.read(32768)
-                html = chunk.decode("utf-8", errors="ignore").lower()
-
-                for marker in TME_OCCUPIED:
-                    if marker in html:
-                        logger.debug(f"t.me @{username}: занят ({marker})")
-                        return False
-
-                if "sorry, this username is not available" in html:
-                    return False
-
-                logger.debug(f"t.me @{username}: свободен")
+                # TG явно говорит что такого нет — свободен
                 return True
-
-        except asyncio.TimeoutError:
-            logger.debug(f"t.me @{username}: таймаут → занят")
+            # Другая ошибка — неизвестно, считаем занятым
+            logger.debug(f"TG unknown error @{username}: {e}")
             return False
         except Exception as e:
-            logger.debug(f"t.me @{username}: ошибка {e} → занят")
+            logger.debug(f"TG exception @{username}: {type(e).__name__}: {e}")
+            # Сетевая ошибка — неизвестно, считаем занятым
             return False
 
     # ------------------------------------------------------------------ #
-    #  3. Fragment HTTP                                                    #
+    #  Fragment: HTTP GET                                                  #
     # ------------------------------------------------------------------ #
 
     async def _check_fragment(self, username: str) -> bool:
         """
-        True  → не на Fragment
-        False → продаётся/продан ИЛИ ошибка/таймаут (консервативно)
+        GET https://fragment.com/username/<nick>
+        True  → ника нет на Fragment
+        False → ник продаётся / продан
+
+        При любой ошибке или таймауте → False (занят).
+        Лучше пропустить свободный, чем выдать занятый.
         """
         async with _fragment_sem:
             try:
                 session = await self._get_session()
                 async with session.get(
                     f"https://fragment.com/username/{username.lower()}",
-                    timeout=aiohttp.ClientTimeout(total=12),
+                    timeout=aiohttp.ClientTimeout(total=8),
                     allow_redirects=True,
                 ) as resp:
                     if resp.status != 200:
+                        logger.debug(f"Fragment @{username}: HTTP {resp.status} → занят")
                         return False
 
                     chunk = await resp.content.read(16384)
@@ -202,28 +154,21 @@ class UsernameChecker:
 
     async def check_username(self, username: str) -> Tuple[bool, str]:
         """
-        Алгоритм:
-        1. Bot API → если нашёл чат: занят
-        2. t.me   → всегда проверяем (ловит личные аккаунты)
-        3. Fragment → проверяем если прошли 1 и 2
+        1. Проверяем Telegram через bot.get_chat
+        2. Если свободен в TG — проверяем Fragment через HTTP
+        Оба должны сказать "свободен" чтобы вернуть True.
         """
         cached = self._from_cache(username)
         if cached is not None:
             return cached, ("Свободен" if cached else "Занят (кэш)")
 
-        # Шаг 1: Bot API (быстро ловит каналы/группы/ботов)
-        api_result = await self._check_bot_api(username)
-        if api_result is False:
+        # Шаг 1: Telegram
+        tg_free = await self._check_telegram(username)
+        if not tg_free:
             self._to_cache(username, False)
             return False, "Занят в Telegram"
 
-        # Шаг 2: t.me (ловит личные аккаунты — Bot API их не видит)
-        tme_free = await self._check_tme(username)
-        if not tme_free:
-            self._to_cache(username, False)
-            return False, "Занят в Telegram"
-
-        # Шаг 3: Fragment
+        # Шаг 2: Fragment
         fr_free = await self._check_fragment(username)
         if not fr_free:
             self._to_cache(username, False)
