@@ -94,6 +94,7 @@ def get_premium_keyboard() -> InlineKeyboardMarkup:
 def get_premium_plans_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="3 часа — 1₽",    callback_data="plan_3_1",    icon_custom_emoji_id="5904462880941545555")],
             [InlineKeyboardButton(text="2 дня — 100₽",   callback_data="plan_2_100",  icon_custom_emoji_id="5904462880941545555")],
             [InlineKeyboardButton(text="4 дня — 175₽",   callback_data="plan_4_175",  icon_custom_emoji_id="5904462880941545555")],
             [InlineKeyboardButton(text="10 дней — 300₽", callback_data="plan_10_300", icon_custom_emoji_id="5904462880941545555")],

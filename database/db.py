@@ -335,6 +335,38 @@ class Database:
             )
             await db.commit()
 
+    async def expire_payment(self, transaction_id: str):
+        """Пометить платёж как EXPIRED (истёк срок оплаты)."""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE payments SET status = 'EXPIRED', updated_at = ? WHERE transaction_id = ?",
+                (now, transaction_id),
+            )
+            await db.commit()
+
+    async def check_expired_payments(self):
+        """Проверить и пометить как EXPIRED платежи старше 15 минут."""
+        now = datetime.now()
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT transaction_id, created_at FROM payments WHERE status = 'PENDING'"
+            ) as cursor:
+                rows = await cursor.fetchall()
+                for row in rows:
+                    txn_id, created_at = row
+                    try:
+                        created_dt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
+                        if (now - created_dt).total_seconds() > 15 * 60:  # 15 минут
+                            await db.execute(
+                                "UPDATE payments SET status = 'EXPIRED', updated_at = ? WHERE transaction_id = ?",
+                                (now.strftime("%Y-%m-%d %H:%M:%S"), txn_id),
+                            )
+                            await db.commit()
+                            logger.info(f"Платёж {txn_id} истёк (15 минут)")
+                    except Exception as e:
+                        logger.error(f"Ошибка проверки истёкшего платежа {txn_id}: {e}")
+
 
 # Глобальный экземпляр базы данных
 db = Database()

@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 PLATEGA_API  = "https://app.platega.io"
 MERCHANT_ID  = os.getenv("PLATEGA_MERCHANT_ID", "")
 SECRET       = os.getenv("PLATEGA_SECRET", "")
-SITE_URL     = os.getenv("SITE_URL", "https://yoursite.ru")
+SITE_URL     = os.getenv("SITE_URL", "https://codersdev.site")
 
 # СБП QR = 2
 PAYMENT_METHOD_SBP = 2
@@ -32,8 +32,8 @@ PAYMENT_METHOD_SBP = 2
 def _headers() -> Dict[str, str]:
     return {
         "Content-Type": "application/json",
-        "X-MerchantId": MERCHANT_ID,
-        "X-Secret": SECRET,
+        "X-MerchantId": os.getenv("PLATEGA_MERCHANT_ID", ""),
+        "X-Secret": os.getenv("PLATEGA_SECRET", ""),
     }
 
 
@@ -54,6 +54,7 @@ async def create_payment(amount: int, days: int, user_id: int) -> Optional[Dict]
         "return": f"https://t.me/codedev_username_bot",
         "failedUrl": f"https://t.me/codedev_username_bot",
         "payload": f"{user_id}:{days}",
+        "expiresIn": 15,  # 15 минут — время на оплату
     }
 
     try:
@@ -62,7 +63,7 @@ async def create_payment(amount: int, days: int, user_id: int) -> Optional[Dict]
                 f"{PLATEGA_API}/transaction/process",
                 json=body,
                 headers=_headers(),
-                timeout=aiohttp.ClientTimeout(total=15),
+                timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 data = await resp.json()
                 logger.info(f"Platega create_payment: {data}")
@@ -82,16 +83,19 @@ async def get_payment_status_from_platega(transaction_id: str) -> Optional[str]:
     """
     try:
         async with aiohttp.ClientSession() as s:
+            url = f"{PLATEGA_API}/transaction/{transaction_id}"
+            logger.info(f"=== Checking Platega status for {transaction_id} ===")
+            logger.info(f"URL={url}")
             async with s.get(
-                f"{PLATEGA_API}/transaction/{transaction_id}",
+                url,
                 headers=_headers(),
-                timeout=aiohttp.ClientTimeout(total=10),
+                timeout=aiohttp.ClientTimeout(total=5),
             ) as resp:
                 data = await resp.json()
                 logger.info(f"Platega status {transaction_id}: {data}")
                 return data.get("status")
     except Exception as e:
-        logger.error(f"Platega get_status exception: {e}")
+        logger.error(f"Platega get_status exception for {transaction_id}: {e}")
         return None
 
 
@@ -102,17 +106,24 @@ async def get_payment_status_from_db(transaction_id: str) -> Optional[str]:
     """
     try:
         async with aiohttp.ClientSession() as s:
+            url = f"{SITE_URL}/api/payment-status"
+            params = {"txn": transaction_id}
+            logger.info(f"=== Checking DB status for {transaction_id} ===")
+            logger.info(f"URL={url}, params={params}")
             async with s.get(
-                f"{SITE_URL}/api/payment-status",
-                params={"txn": transaction_id},
-                timeout=aiohttp.ClientTimeout(total=8),
+                url,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=5),
             ) as resp:
+                logger.info(f"DB status check for {transaction_id}: status={resp.status}")
                 if resp.status == 200:
                     data = await resp.json()
+                    logger.info(f"DB status response for {transaction_id}: {data}")
                     return data.get("status")
+                logger.warning(f"DB status check for {transaction_id}: unexpected status {resp.status}")
                 return None
     except Exception as e:
-        logger.error(f"DB status check exception: {e}")
+        logger.error(f"DB status check exception for {transaction_id}: {e}")
         return None
 
 
@@ -121,7 +132,16 @@ async def get_payment_status(transaction_id: str) -> Optional[str]:
     Сначала пробует получить статус из своей БД (через PHP),
     если не получилось — спрашивает напрямую у Platega.
     """
+    logger.info(f"=== Getting payment status for {transaction_id} ===")
+    logger.info(f"SITE_URL={SITE_URL}, PLATEGA_API={PLATEGA_API}")
     status = await get_payment_status_from_db(transaction_id)
     if status:
+        logger.info(f"Payment {transaction_id} status from DB: {status}")
         return status
-    return await get_payment_status_from_platega(transaction_id)
+    logger.info(f"Payment {transaction_id} not in DB, checking Platega directly...")
+    status = await get_payment_status_from_platega(transaction_id)
+    if status:
+        logger.info(f"Payment {transaction_id} status from Platega: {status}")
+    else:
+        logger.warning(f"Payment {transaction_id} status not found!")
+    return status

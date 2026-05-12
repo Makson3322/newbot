@@ -9,19 +9,18 @@ import logging
 import sys
 from os import getenv
 
+# Загрузка переменных окружения — ПЕРВЫМ делом, до всех импортов
+from dotenv import load_dotenv
+load_dotenv()
+
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from dotenv import load_dotenv
-
 # Импорт обработчиков
 from handlers import start, search, filter, profile, support, admin
 from database.db import db
-
-# Загрузка переменных окружения
-load_dotenv()
 
 # Настройка логирования
 logging.basicConfig(
@@ -69,6 +68,11 @@ async def main():
     logger.info("Инициализация базы данных...")
     await db.init_db()
     logger.info("✅ База данных инициализирована")
+    
+    # Проверка истёкших платежей
+    logger.info("Проверка истёкших платежей...")
+    await db.check_expired_payments()
+    logger.info("✅ Проверка истёкших платежей завершена")
     
     # Запуск бота
     logger.info("🚀 Бот запущен и готов к работе!")

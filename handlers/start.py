@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 PLANS = {
+    "plan_3_1":    ("3 часа",   0.125, 1),
     "plan_2_100":  ("2 дня",    2,  100),
     "plan_4_175":  ("4 дня",    4,  175),
     "plan_10_300": ("10 дней", 10,  300),
@@ -228,61 +229,125 @@ async def check_payment(callback: CallbackQuery, bot: Bot):
     transaction_id = callback.data.replace("check_pay_", "")
     user_id = callback.from_user.id
 
+    logger.info(f"Check payment for transaction {transaction_id}, user {user_id}")
+
     await callback.answer()
 
     # Сначала проверяем в своей БД
     payment = await db.get_payment(transaction_id)
+    logger.info(f"Payment from DB: {payment}")
+
+    # Если платеж не найден или истёк — показываем сообщение о ожидании
+    if not payment:
+        await callback.message.answer(
+            f"{E['clock']} <b>Проверяем оплату...</b>\n\n"
+            "Если вы уже оплатили, подождите 1-2 минуты.\n"
+            "Проверка обычно занимает несколько секунд.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="Оплатить СБП",
+                    callback_data=f"retry_pay_{transaction_id}",
+                    icon_custom_emoji_id="5879814368572478751",
+                )],
+                [InlineKeyboardButton(
+                    text="Проверить оплату",
+                    callback_data=f"check_pay_{transaction_id}",
+                    icon_custom_emoji_id="5870633910337015697",
+                )],
+                [InlineKeyboardButton(
+                    text="Отмена",
+                    callback_data="cancel_payment",
+                    icon_custom_emoji_id="5870657884844462243",
+                )],
+            ]),
+        )
+        return
+
+    # Проверяем, не истёк ли платёж (15 минут)
+    created_at = payment.get("created_at")
+    if created_at and payment.get("status") == "PENDING":
+        try:
+            created_dt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
+            if (datetime.now() - created_dt).total_seconds() > 15 * 60:
+                await db.expire_payment(transaction_id)
+                await callback.message.answer(
+                    f"{E['clock']} <b>Срок оплаты истёк.</b>\n\n"
+                    "Попробуйте создать новый платёж.",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="Назад к тарифам", callback_data="back_to_plans",
+                                              icon_custom_emoji_id="5893057118545646106")]
+                    ]),
+                )
+                return
+        except Exception:
+            pass
 
     # Если в своей БД ещё PENDING — спрашиваем у Platega напрямую
-    if not payment or payment.get("status") == "PENDING":
+    if payment.get("status") == "PENDING":
+        logger.info(f"Payment {transaction_id} is PENDING, checking status...")
         status = await get_payment_status(transaction_id)
-        if status == "CONFIRMED" and payment:
+        logger.info(f"Payment {transaction_id} status from get_payment_status: {status}")
+        if status == "CONFIRMED":
             await db.confirm_payment(transaction_id)
             payment["status"] = "CONFIRMED"
-        elif status in ("CANCELED", "CHARGEBACK") and payment:
+        elif status in ("CANCELED", "CHARGEBACK"):
             await db.cancel_payment(transaction_id)
             payment["status"] = status
     else:
         status = payment.get("status", "PENDING")
 
-    if not payment:
-        await callback.message.edit_text(
-            f"{E['no']} Платёж не найден. Попробуйте создать новый.",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Назад к тарифам", callback_data="back_to_plans",
-                                      icon_custom_emoji_id="5893057118545646106")]
-            ]),
-        )
-        return
-
     current_status = payment.get("status", "PENDING")
+    logger.info(f"Payment {transaction_id} current_status={current_status}")
 
     if current_status == "CONFIRMED":
         days = payment.get("days", 30)
+        logger.info(f"Payment {transaction_id} confirmed, granting {days} days premium to user {user_id}")
 
         # Проверяем не выдан ли уже (защита от дублей)
         already = await db.check_premium(user_id)
         if not already:
             await db.set_premium(user_id, days=days)
+            logger.info(f"Premium granted to user {user_id}")
 
         until = datetime.now() + timedelta(days=days)
         until_str = until.strftime("%d.%m.%Y %H:%M")
 
-        await callback.message.edit_text(
-            f"{E['star']} <b>Premium активирован!</b>\n\n"
-            f"{E['clock']} Действует до: <b>{until_str}</b>\n\n"
-            "<b>Теперь вам доступны:</b>\n"
-            f"  {E['ok']} Безлимитный поиск\n"
-            f"  {E['search']} Поиск 5-буквенных ников\n"
-            f"  {E['ok']} Фильтр по маске",
+        # Определяем название периода
+        if days < 1:
+            period_name = f"{int(days * 24)} часов"
+        elif days == 1:
+            period_name = "1 день"
+        elif days < 5:
+            period_name = f"{int(days)} дня"
+        else:
+            period_name = f"{int(days)} дней"
+
+        # Удаляем старое сообщение с кнопками оплаты
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+
+        # Отправляем новое сообщение с благодарностью
+        await bot.send_message(
+            chat_id=user_id,
+            text=f"{E['star']} <b>Спасибо за покупку!</b>\n\n"
+                 f"{E['ok']} Оплата успешно подтверждена\n"
+                 f"{E['diamond']} Теперь у Вас есть Premium на <b>{period_name}</b>\n"
+                 f"{E['clock']} Действует до: <b>{until_str}</b>\n\n"
+                 "<b>Вам доступны:</b>\n"
+                 f"  {E['ok']} Безлимитный поиск\n"
+                 f"  {E['search']} Поиск 5-буквенных ников\n"
+                 f"  {E['ok']} Фильтр по маске",
             parse_mode="HTML",
             reply_markup=get_main_keyboard(),
         )
 
-    elif current_status in ("CANCELED", "CHARGEBACK"):
+    elif current_status in ("CANCELED", "CHARGEBACK", "EXPIRED"):
         await callback.message.edit_text(
-            f"{E['no']} <b>Платёж отменён.</b>\n\n"
+            f"{E['no']} <b>Платёж отменён или истёк.</b>\n\n"
             "Попробуйте оплатить снова.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -295,10 +360,137 @@ async def check_payment(callback: CallbackQuery, bot: Bot):
         # Всё ещё PENDING
         await callback.message.answer(
             f"{E['clock']} <b>Оплата ещё не поступила.</b>\n\n"
-            "Оплатите по ссылке выше и нажмите «Проверить оплату» снова.\n"
-            "Обычно оплата подтверждается за 1-2 минуты.",
+            "Если вы уже оплатили, подождите 1-2 минуты.\n"
+            "Проверка обычно занимает несколько секунд.\n\n"
+            "Нажмите «Проверить оплату» снова.",
             parse_mode="HTML",
         )
+
+
+@router.callback_query(F.data.startswith("retry_pay_"))
+async def retry_pay(callback: CallbackQuery, bot: Bot):
+    transaction_id = callback.data.replace("retry_pay_", "")
+    user_id = callback.from_user.id
+
+    logger.info(f"Retry pay for transaction {transaction_id}, user {user_id}")
+
+    await callback.answer()
+
+    # Получаем данные платежа
+    payment = await db.get_payment(transaction_id)
+    logger.info(f"Payment from DB: {payment}")
+    if not payment:
+        await callback.message.edit_text(
+            f"{E['no']} Платёж не найден. Попробуйте создать новый.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Назад к тарифам", callback_data="back_to_plans",
+                                      icon_custom_emoji_id="5893057118545646106")]
+            ]),
+        )
+        return
+
+    # Проверяем, не истёк ли платёж (15 минут)
+    created_at = payment.get("created_at")
+    if created_at and payment.get("status") == "PENDING":
+        try:
+            created_dt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
+            if (datetime.now() - created_dt).total_seconds() > 15 * 60:
+                await db.expire_payment(transaction_id)
+                await callback.message.edit_text(
+                    f"{E['clock']} <b>Срок оплаты истёк.</b>\n\n"
+                    "Попробуйте создать новый платёж.",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="Назад к тарифам", callback_data="back_to_plans",
+                                              icon_custom_emoji_id="5893057118545646106")]
+                    ]),
+                )
+                return
+        except Exception:
+            pass
+
+    # Проверяем статус у Platega
+    logger.info(f"Retry pay {transaction_id} checking status...")
+    status = await get_payment_status(transaction_id)
+    logger.info(f"Retry pay {transaction_id} status from get_payment_status: {status}")
+    if status == "CONFIRMED":
+        await db.confirm_payment(transaction_id)
+        payment["status"] = "CONFIRMED"
+    elif status in ("CANCELED", "CHARGEBACK"):
+        await db.cancel_payment(transaction_id)
+        payment["status"] = status
+
+    current_status = payment.get("status", "PENDING")
+    logger.info(f"Retry pay {transaction_id} current_status={current_status}")
+
+    if current_status == "CONFIRMED":
+        days = payment.get("days", 30)
+        logger.info(f"Retry pay {transaction_id} confirmed, granting {days} days premium to user {user_id}")
+        already = await db.check_premium(user_id)
+        if not already:
+            await db.set_premium(user_id, days=days)
+            logger.info(f"Premium granted to user {user_id}")
+        until = datetime.now() + timedelta(days=days)
+        until_str = until.strftime("%d.%m.%Y %H:%M")
+
+        # Определяем название периода
+        if days < 1:
+            period_name = f"{int(days * 24)} часов"
+        elif days == 1:
+            period_name = "1 день"
+        elif days < 5:
+            period_name = f"{int(days)} дня"
+        else:
+            period_name = f"{int(days)} дней"
+
+        # Удаляем старое сообщение с кнопками оплаты
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+
+        # Отправляем новое сообщение с благодарностью
+        await bot.send_message(
+            chat_id=user_id,
+            text=f"{E['star']} <b>Спасибо за покупку!</b>\n\n"
+                 f"{E['ok']} Оплата успешно подтверждена\n"
+                 f"{E['diamond']} Теперь у Вас есть Premium на <b>{period_name}</b>\n"
+                 f"{E['clock']} Действует до: <b>{until_str}</b>\n\n"
+                 "<b>Вам доступны:</b>\n"
+                 f"  {E['ok']} Безлимитный поиск\n"
+                 f"  {E['search']} Поиск 5-буквенных ников\n"
+                 f"  {E['ok']} Фильтр по маске",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard(),
+        )
+        return
+
+    # Если всё ещё не оплачено — показываем сообщение о ожидании
+    await callback.message.edit_text(
+        f"{E['clock']} <b>Проверяем оплату...</b>\n\n"
+        "Если вы уже оплатили, подождите 1-2 минуты.\n"
+        "Проверка обычно занимает несколько секунд.\n\n"
+        "Нажмите «Проверить оплату» снова.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="Оплатить СБП",
+                callback_data=f"retry_pay_{transaction_id}",
+                icon_custom_emoji_id="5879814368572478751",
+            )],
+            [InlineKeyboardButton(
+                text="Проверить оплату",
+                callback_data=f"check_pay_{transaction_id}",
+                icon_custom_emoji_id="5870633910337015697",
+            )],
+            [InlineKeyboardButton(
+                text="Отмена",
+                callback_data="cancel_payment",
+                icon_custom_emoji_id="5870657884844462243",
+            )],
+        ]),
+    )
 
 
 @router.callback_query(F.data == "cancel_payment")
